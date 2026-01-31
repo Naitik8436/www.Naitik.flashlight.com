@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Music Flashlight Lock Mode</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+body{
+  margin:0;
+  background:black;
+  color:white;
+  font-family:Arial;
+  text-align:center;
+  transition:background 0.08s;
+}
+
+/* LOADING */
+#loading{
+  position:fixed;
+  inset:0;
+  background:black;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:999;
+}
+#loading h1{color:lime}
+
+/* APP */
+#app{display:none}
+
+button,input,select{
+  width:90%;
+  margin:6px;
+  padding:12px;
+  font-size:16px;
+  border-radius:10px;
+  border:none;
+}
+button{background:lime;color:black}
+input,select{background:#222;color:lime}
+
+canvas{
+  width:90%;
+  height:100px;
+  background:#111;
+  border-radius:10px;
+}
+
+/* LOCK MODE */
+.lock-mode *{
+  opacity:0;
+  pointer-events:none;
+}
+.lock-mode{
+  background:black !important;
+}
+
+.footer{
+  font-size:13px;
+  color:#aaa;
+  margin:15px 0;
+}
+</style>
+</head>
+
+<body>
+
+<div id="loading">
+  <h1>Loading…</h1>
+</div>
+
+<div id="app">
+<h2>🎵 Music Flashlight Sync</h2>
+
+<select id="source">
+  <option value="music">🎶 Music File</option>
+  <option value="mic">🎤 Microphone</option>
+</select>
+
+<input type="file" id="musicFile" accept="audio/*">
+<audio id="music" controls></audio>
+
+<select id="effect">
+  <option value="beat">💡 Beat</option>
+  <option value="strobe">⚡ Strobe</option>
+  <option value="pulse">💓 Pulse</option>
+  <option value="rainbow">🌈 Rainbow</option>
+</select>
+
+<label>Sensitivity</label>
+<input type="range" id="sens" min="30" max="150" value="80">
+
+<canvas id="viz"></canvas>
+
+<button onclick="start()">▶ START</button>
+<button onclick="stopAll()">⏹ STOP</button>
+<button onclick="lockMode()">🔒 Lock Screen Mode</button>
+
+<div class="footer">
+This is created by <b>Naitik Agarwal</b>
+</div>
+</div>
+
+<script>
+/* LOADING */
+window.onload=()=>{
+  setTimeout(()=>{
+    loading.style.display="none";
+    app.style.display="block";
+    window.scrollTo({top:0,behavior:"smooth"});
+  },1500);
+};
+
+let stream,track,ctx,analyser,data,src;
+let running=false,last=0,wakeLock=null;
+
+musicFile.onchange=()=>{
+  if(musicFile.files[0])
+    music.src=URL.createObjectURL(musicFile.files[0]);
+};
+
+async function start(){
+  if(running) return;
+  running=true;
+
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:"environment"},
+      audio: source.value==="mic"
+    });
+
+    track=stream.getVideoTracks()[0];
+    if(!track.getCapabilities().torch){
+      alert("Flashlight not supported");
+      running=false;
+      return;
+    }
+
+    ctx=new AudioContext();
+    analyser=ctx.createAnalyser();
+    analyser.fftSize=256;
+    data=new Uint8Array(analyser.frequencyBinCount);
+
+    if(source.value==="mic")
+      src=ctx.createMediaStreamSource(stream);
+    else{
+      src=ctx.createMediaElementSource(music);
+      await music.play();
+    }
+
+    src.connect(analyser);
+    analyser.connect(ctx.destination);
+    loop();
+
+  }catch(e){
+    alert("Permission denied");
+    running=false;
+  }
+}
+
+function loop(){
+  if(!running) return;
+
+  analyser.getByteFrequencyData(data);
+  let avg=data.reduce((a,b)=>a+b)/data.length;
+  let now=Date.now(),torch=false;
+
+  if(effect.value==="beat") torch=avg>sens.value;
+  if(effect.value==="strobe") torch=avg>sens.value && now-last>120;
+  if(effect.value==="pulse") torch=avg>sens.value && now-last>250;
+  if(effect.value==="rainbow") torch=now-last>120;
+
+  track.applyConstraints({advanced:[{torch:torch}]});
+  last=now;
+
+  document.body.style.background=
+    effect.value==="rainbow"
+    ? `hsl(${avg*2},100%,50%)`
+    : `rgb(${avg*2},0,${255-avg})`;
+
+  const c=viz.getContext("2d");
+  c.clearRect(0,0,viz.width,viz.height);
+  let w=viz.width/data.length*2;
+  for(let i=0;i<data.length;i++){
+    c.fillStyle="lime";
+    c.fillRect(i*w,viz.height-data[i]/2,w-1,data[i]/2);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+function stopAll(){
+  running=false;
+  try{
+    track.applyConstraints({advanced:[{torch:false}]});
+    stream.getTracks().forEach(t=>t.stop());
+    ctx.close();
+  }catch(e){}
+  document.body.style.background="black";
+}
+
+/* LOCK STYLE MODE */
+async function lockMode(){
+  document.documentElement.requestFullscreen();
+  if("wakeLock" in navigator){
+    try{wakeLock=await navigator.wakeLock.request("screen");}catch(e){}
+  }
+  document.body.classList.add("lock-mode");
+
+  document.body.onclick=()=>{
+    document.body.classList.remove("lock-mode");
+    if(wakeLock) wakeLock.release();
+    document.exitFullscreen();
+    document.body.onclick=null;
+  };
+}
+</script>
+
+</body>
+</html>
